@@ -72,7 +72,11 @@ function buildSummary(start, end) {
   const total = days.reduce((s, r) => s + r.total, 0);
   const count = days.reduce((s, r) => s + r.count, 0);
 
-  return { start, end, total, count, days, serviceBreakdown };
+  const expensesTotal = db
+    .prepare("SELECT COALESCE(SUM(amount),0) as total FROM expenses WHERE date BETWEEN ? AND ?")
+    .get(start, end).total;
+
+  return { start, end, total, count, days, serviceBreakdown, expensesTotal };
 }
 
 // GET /api/summary/week/:date

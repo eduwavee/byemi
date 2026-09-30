@@ -4,8 +4,7 @@ import {
   toLocalDateStr,
   fmtMoney,
   fmtDateLabel,
-  SERVICE_TYPES,
-  EXTRAS_OPTIONS,
+  suggestedPrice,
 } from "./utils";
 
 const DEFAULT_SPLIT = {
@@ -19,7 +18,16 @@ const DEFAULT_SPLIT = {
 
 export const SPLIT_COLORS = { insumos: "#EE8AA6", ganancia: "#F2B880", otro: "#B79CEB" };
 
-export default function Caja({ today, flash, clients, onEntriesChanged, setOffline }) {
+export default function Caja({
+  today,
+  flash,
+  clients,
+  catalog,
+  prefill,
+  onPrefillUsed,
+  onEntriesChanged,
+  setOffline,
+}) {
   const [currentDate, setCurrentDate] = useState(today);
   const [entries, setEntries] = useState([]);
   const [split, setSplit] = useState(DEFAULT_SPLIT);
@@ -30,6 +38,11 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
   const [amount, setAmount] = useState("");
   const [serviceType, setServiceType] = useState("");
   const [extras, setExtras] = useState([]);
+  // el monto se completa solo con la lista de precios hasta que se lo toca a mano
+  const [amountTouched, setAmountTouched] = useState(false);
+  const [expenses, setExpenses] = useState([]);
+  const [expenseDesc, setExpenseDesc] = useState("");
+  const [expenseAmount, setExpenseAmount] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [summaryRange, setSummaryRange] = useState("week");
@@ -41,8 +54,9 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
   const loadDay = useCallback(async (date) => {
     setLoading(true);
     try {
-      const list = await api.getEntries(date);
+      const [list, exp] = await Promise.all([api.getEntries(date), api.getExpenses(date)]);
       setEntries(list);
+      setExpenses(exp);
       setOffline(false);
     } catch (err) {
       setOffline(true);
@@ -88,6 +102,31 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
     [entries]
   );
 
+  const expensesTotal = useMemo(
+    () => expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0),
+    [expenses]
+  );
+
+  const serviceNames = catalog.services.map((s) => s.name);
+  const extraNames = catalog.extras.map((x) => x.name);
+
+  useEffect(() => {
+    if (amountTouched) return;
+    const price = suggestedPrice(catalog, serviceType, extras);
+    setAmount(price > 0 ? String(price) : "");
+  }, [serviceType, extras, catalog, amountTouched]);
+
+  // "Vino" desde un turno: precarga la clienta y el servicio
+  useEffect(() => {
+    if (!prefill) return;
+    setCurrentDate(prefill.date);
+    setName(prefill.name);
+    setServiceType(prefill.service || "");
+    setExtras([]);
+    setAmountTouched(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [prefill]);
+
   const toggleExtra = (opt) => {
     setExtras((prev) => (prev.includes(opt) ? prev.filter((x) => x !== opt) : [...prev, opt]));
   };
@@ -96,7 +135,7 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
   const onNameChange = (value) => {
     setName(value);
     const match = clients.find((c) => c.name.toLowerCase() === value.trim().toLowerCase());
-    if (match && match.service && SERVICE_TYPES.includes(match.service) && !serviceType) {
+    if (match && match.service && serviceNames.includes(match.service) && !serviceType) {
       setServiceType(match.service);
     }
   };
@@ -120,12 +159,15 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
         time,
         serviceType,
         extras,
+        appointmentId: prefill?.appointmentId,
       });
       setEntries((prev) => [...prev, created]);
       setName("");
       setAmount("");
+      setAmountTouched(false);
       setServiceType("");
       setExtras([]);
+      if (prefill) onPrefillUsed(true);
       if (!datesIndex.includes(currentDate)) {
         setDatesIndex((prev) => [currentDate, ...prev].sort((a, b) => (a < b ? 1 : -1)));
       }
@@ -147,6 +189,42 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
       setEntries(prev);
       flash("No se pudo borrar.");
     }
+  };
+
+  const addExpense = async (e) => {
+    e.preventDefault();
+    const val = parseFloat(expenseAmount);
+    if (!val || val <= 0) {
+      flash("Poné el monto del gasto.");
+      return;
+    }
+    try {
+      const created = await api.addExpense(currentDate, { description: expenseDesc.trim(), amount: val });
+      setExpenses((prev) => [...prev, created]);
+      setExpenseDesc("");
+      setExpenseAmount("");
+    } catch {
+      flash("No se pudo guardar el gasto.");
+    }
+  };
+
+  const deleteExpense = async (id) => {
+    const prev = expenses;
+    setExpenses((list) => list.filter((x) => x.id !== id));
+    try {
+      await api.deleteExpense(id);
+    } catch {
+      setExpenses(prev);
+      flash("No se pudo borrar el gasto.");
+    }
+  };
+
+  const cancelPrefill = () => {
+    onPrefillUsed(false);
+    setName("");
+    setServiceType("");
+    setExtras([]);
+    setAmountTouched(false);
   };
 
   const shiftDate = (delta) => {
@@ -266,10 +344,27 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
       <div className="totalCard">
         <div className="totalLabel">Total del día</div>
         <div className="totalNumber">{fmtMoney(total)}</div>
-        <div className="totalSub">{entries.length} {entries.length === 1 ? "clienta" : "clientas"}</div>
+        <div className="totalSub">
+          {entries.length} {entries.length === 1 ? "clienta" : "clientas"}
+          {expensesTotal > 0 && <> · quedan {fmtMoney(total - expensesTotal)} después de gastos</>}
+        </div>
       </div>
 
       <div className="card">
+        {prefill && (
+          <div className="prefillBanner">
+            <div>
+              <b>Cobrando el turno de {prefill.name}</b>
+              {prefill.deposit > 0 && (
+                <div>
+                  Dejó seña de {fmtMoney(prefill.deposit)}
+                  {Number(amount) > 0 && <> — cobrale {fmtMoney(Math.max(0, Number(amount) - prefill.deposit))}</>}
+                </div>
+              )}
+            </div>
+            <button type="button" className="linkBtn" onClick={cancelPrefill}>Cancelar</button>
+          </div>
+        )}
         <form onSubmit={addEntry} className="form">
           <input
             className="input"
@@ -293,14 +388,17 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
             min="0"
             step="0.01"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              setAmount(e.target.value);
+              setAmountTouched(true);
+            }}
           />
           <button type="submit" className="primaryBtn">Agregar</button>
         </form>
 
         <div className="fieldLabel">Tipo de servicio</div>
         <div className="chipRow">
-          {SERVICE_TYPES.map((s) => (
+          {serviceNames.map((s) => (
             <button
               type="button"
               key={s}
@@ -314,7 +412,7 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
 
         <div className="fieldLabel" style={{ marginTop: 14 }}>Extras</div>
         <div className="chipRow">
-          {EXTRAS_OPTIONS.map((opt) => (
+          {extraNames.map((opt) => (
             <button
               type="button"
               key={opt}
@@ -355,6 +453,43 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
               </div>
             ))
         )}
+      </div>
+
+      <div className="card">
+        <div className="cardHeader">
+          <h2 className="h2">Gastos del día</h2>
+          {expensesTotal > 0 && <span className="hint">Total: {fmtMoney(expensesTotal)}</span>}
+        </div>
+        {expenses.map((x) => (
+          <div key={x.id} className="miniRow">
+            <span>{x.description}</span>
+            <span className="entryRight">
+              <b>−{fmtMoney(x.amount)}</b>
+              <button className="iconBtn" onClick={() => deleteExpense(x.id)} aria-label={`Borrar gasto ${x.description}`}>×</button>
+            </span>
+          </div>
+        ))}
+        <form onSubmit={addExpense} className="form" style={{ marginTop: expenses.length ? 12 : 0, marginBottom: 0 }}>
+          <input
+            className="input"
+            style={{ flex: 1.3 }}
+            placeholder="Ej: esmaltes, limas"
+            value={expenseDesc}
+            onChange={(e) => setExpenseDesc(e.target.value)}
+          />
+          <input
+            className="input"
+            style={{ flex: 1 }}
+            placeholder="Monto"
+            inputMode="decimal"
+            type="number"
+            min="0"
+            step="0.01"
+            value={expenseAmount}
+            onChange={(e) => setExpenseAmount(e.target.value)}
+          />
+          <button type="submit" className="secondaryBtn">Anotar</button>
+        </form>
       </div>
 
       <div className="card">
@@ -510,6 +645,19 @@ export default function Caja({ today, flash, clients, onEntriesChanged, setOffli
                   <b>{fmtMoney((summaryData.total * split.otro) / 100)}</b>
                 </div>
               </div>
+
+              {summaryData.expensesTotal > 0 && (
+                <div className="summarySection">
+                  <div className="miniRow">
+                    <span>Gastos anotados</span>
+                    <b>−{fmtMoney(summaryData.expensesTotal)}</b>
+                  </div>
+                  <div className="miniRow">
+                    <span>Queda (cobrado − gastos)</span>
+                    <b>{fmtMoney(summaryData.total - summaryData.expensesTotal)}</b>
+                  </div>
+                </div>
+              )}
 
               {summaryData.serviceBreakdown.length > 0 && (
                 <div className="summarySection">

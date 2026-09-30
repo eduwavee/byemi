@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { api } from "./api";
 import {
-  SERVICE_TYPES,
   addDays,
   daysBetween,
+  daysToBirthday,
+  fmtBirthday,
   fmtDateLabel,
+  fmtMoney,
   fmtShortDate,
   fillTemplate,
   firstName,
@@ -16,25 +18,32 @@ export const DEFAULT_REMINDERS = {
     "¡Hola {nombre}! 💅 Te recuerdo tu turno de {servicio} el {dia} a las {hora}. ¡Te espero! Si no podés venir avisame así libero el horario 🌸",
   service:
     "¡Hola {nombre}! 💖 Ya pasaron {semanas} semanas desde tu último service. ¿Querés que te reserve un turno para esta semana?",
+  cumple:
+    "¡Feliz cumple {nombre}! 🎂💅 Te regalo un 10% de descuento en tu próximo service de este mes. ¡Que lo disfrutes mucho!",
   serviceDays: 21,
 };
 
-// guardado local de a quien ya se le mando el aviso de service (por visita)
+const BIRTHDAY_WINDOW = 7;
+
+// guardado local de avisos ya mandados (service por visita, cumple por año)
 const SENT_KEY = "byemi:service-sent";
-export const readSent = () => {
+const BDAY_KEY = "byemi:birthday-sent";
+const readJson = (key) => {
   try {
-    return JSON.parse(localStorage.getItem(SENT_KEY) || "{}");
+    return JSON.parse(localStorage.getItem(key) || "{}");
   } catch {
     return {};
   }
 };
-const writeSent = (value) => {
+const writeJson = (key, value) => {
   try {
-    localStorage.setItem(SENT_KEY, JSON.stringify(value));
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // sin storage: solo se pierde la marca visual
   }
 };
+export const readSent = () => readJson(SENT_KEY);
+export const readBirthdaySent = () => readJson(BDAY_KEY);
 
 // clientas que ya pasaron el intervalo desde su ultima visita y no tienen turno
 export const dueForService = (clients, today, serviceDays) =>
@@ -46,7 +55,10 @@ export const dueForService = (clients, today, serviceDays) =>
 
 // turnos de hoy y manana que todavia no tienen recordatorio
 export const pendingTurnos = (appointments, today) =>
-  appointments.filter((a) => !a.remindedAt && a.date <= addDays(today, 1));
+  appointments.filter((a) => !a.done && !a.remindedAt && a.date <= addDays(today, 1));
+
+export const birthdaysToday = (clients, today) =>
+  clients.filter((c) => daysToBirthday(c.birthday, today) === 0);
 
 export default function Recordatorios({
   today,
@@ -56,61 +68,16 @@ export default function Recordatorios({
   reminderCfg,
   setReminderCfg,
   flash,
-  preselectClientId,
-  onClientsChanged,
+  onGoToAgenda,
+  onAttend,
 }) {
-  const [draft, setDraft] = useState({ clientId: "", date: addDays(today, 1), time: "", service: "" });
   const [showTemplates, setShowTemplates] = useState(false);
   const [tplDraft, setTplDraft] = useState(reminderCfg);
   const [sent, setSent] = useState(readSent);
+  const [bdaySent, setBdaySent] = useState(readBirthdaySent);
+  const year = today.slice(0, 4);
 
   useEffect(() => setTplDraft(reminderCfg), [reminderCfg]);
-
-  useEffect(() => {
-    if (!preselectClientId) return;
-    const c = clients.find((x) => x.id === preselectClientId);
-    setDraft((d) => ({ ...d, clientId: preselectClientId, service: c?.service || d.service }));
-  }, [preselectClientId, clients]);
-
-  const pickClient = (id) => {
-    const c = clients.find((x) => x.id === id);
-    setDraft((d) => ({ ...d, clientId: id, service: c?.service || d.service }));
-  };
-
-  const addTurno = async (e) => {
-    e.preventDefault();
-    if (!draft.clientId) {
-      flash("Elegí una clienta.");
-      return;
-    }
-    if (!draft.date) {
-      flash("Elegí la fecha del turno.");
-      return;
-    }
-    try {
-      const created = await api.addAppointment(draft);
-      setAppointments((prev) =>
-        [...prev, created].sort((a, b) => (a.date + a.time < b.date + b.time ? -1 : 1))
-      );
-      setDraft({ clientId: "", date: draft.date, time: "", service: "" });
-      onClientsChanged();
-      flash("Turno agendado.");
-    } catch {
-      flash("No se pudo agendar. Revisá tu conexión.");
-    }
-  };
-
-  const removeTurno = async (id) => {
-    const prev = appointments;
-    setAppointments((list) => list.filter((a) => a.id !== id));
-    try {
-      await api.deleteAppointment(id);
-      onClientsChanged();
-    } catch {
-      setAppointments(prev);
-      flash("No se pudo borrar el turno.");
-    }
-  };
 
   const markReminded = async (id) => {
     try {
@@ -124,7 +91,13 @@ export default function Recordatorios({
   const markServiceSent = (c) => {
     const next = { ...sent, [c.id]: c.lastVisit };
     setSent(next);
-    writeSent(next);
+    writeJson(SENT_KEY, next);
+  };
+
+  const markBirthdaySent = (c) => {
+    const next = { ...bdaySent, [c.id]: year };
+    setBdaySent(next);
+    writeJson(BDAY_KEY, next);
   };
 
   const saveTemplates = async () => {
@@ -153,12 +126,16 @@ export default function Recordatorios({
       semanas: Math.floor(daysBetween(c.lastVisit, today) / 7),
     });
 
+  const birthdayMessage = (c) =>
+    fillTemplate(reminderCfg.cumple, { nombre: firstName(c.name), servicio: c.service || "uñas" });
+
   const groups = useMemo(() => {
     const tomorrow = addDays(today, 1);
+    const pending = appointments.filter((a) => !a.done);
     return [
-      { key: "hoy", title: "Hoy", items: appointments.filter((a) => a.date === today) },
-      { key: "manana", title: "Mañana", items: appointments.filter((a) => a.date === tomorrow) },
-      { key: "prox", title: "Más adelante", items: appointments.filter((a) => a.date > tomorrow) },
+      { key: "hoy", title: "Hoy", items: pending.filter((a) => a.date === today) },
+      { key: "manana", title: "Mañana", items: pending.filter((a) => a.date === tomorrow) },
+      { key: "prox", title: "Más adelante", items: pending.filter((a) => a.date > tomorrow) },
     ].filter((g) => g.items.length > 0);
   }, [appointments, today]);
 
@@ -167,78 +144,41 @@ export default function Recordatorios({
     [clients, today, reminderCfg.serviceDays]
   );
 
+  const birthdays = useMemo(
+    () =>
+      clients
+        .map((c) => ({ ...c, inDays: daysToBirthday(c.birthday, today) }))
+        .filter((c) => c.inDays !== null && c.inDays <= BIRTHDAY_WINDOW)
+        .sort((a, b) => a.inDays - b.inDays),
+    [clients, today]
+  );
+
+  const waButton = (phone, text, done, onClick, label) =>
+    phone ? (
+      <a
+        className={done ? "waBtn waDone" : "waBtn"}
+        href={whatsAppLink(phone, text)}
+        target="_blank"
+        rel="noreferrer"
+        onClick={onClick}
+      >
+        {done ? "✓ Avisado" : label}
+      </a>
+    ) : (
+      <span className="hint">Sin teléfono</span>
+    );
+
   return (
     <>
       <div className="sectionIntro">
-        <h2 className="sectionTitle">Recordatorios</h2>
-        <p className="sectionSub">Agendá turnos y avisale a tus clientas por WhatsApp con un toque.</p>
+        <h2 className="sectionTitle">Avisos</h2>
+        <p className="sectionSub">Recordatorios de turnos, service y cumpleaños por WhatsApp.</p>
       </div>
 
-      <form className="card" onSubmit={addTurno}>
-        <div className="cardHeader">
-          <h2 className="h2">Nuevo turno</h2>
-        </div>
-        {clients.length === 0 ? (
-          <div className="emptyState">Primero guardá alguna clienta en la pestaña Clientas.</div>
-        ) : (
-          <>
-            <label className="field">
-              <span className="fieldLabel">Clienta</span>
-              <select
-                className="input"
-                value={draft.clientId}
-                onChange={(e) => pickClient(e.target.value)}
-              >
-                <option value="">Elegí una clienta…</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </label>
-            <div className="fieldRow">
-              <label className="field">
-                <span className="fieldLabel">Día</span>
-                <input
-                  className="input"
-                  type="date"
-                  min={today}
-                  value={draft.date}
-                  onChange={(e) => setDraft((d) => ({ ...d, date: e.target.value }))}
-                />
-              </label>
-              <label className="field">
-                <span className="fieldLabel">Hora</span>
-                <input
-                  className="input"
-                  type="time"
-                  value={draft.time}
-                  onChange={(e) => setDraft((d) => ({ ...d, time: e.target.value }))}
-                />
-              </label>
-            </div>
-            <div className="field">
-              <span className="fieldLabel">Servicio</span>
-              <div className="chipRow">
-                {SERVICE_TYPES.map((s) => (
-                  <button
-                    type="button"
-                    key={s}
-                    className={`chip ${draft.service === s ? "chipActive" : ""}`}
-                    onClick={() => setDraft((d) => ({ ...d, service: s }))}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="formActions">
-              <button type="submit" className="primaryBtn">Agendar turno</button>
-            </div>
-          </>
-        )}
-      </form>
-
-      <h3 className="groupTitle">Próximos turnos</h3>
+      <div className="groupHeader">
+        <h3 className="groupTitle">Próximos turnos</h3>
+        <button className="softBtn" onClick={onGoToAgenda}>+ Agendar</button>
+      </div>
       {groups.length === 0 ? (
         <div className="card emptyState">No hay turnos agendados.</div>
       ) : (
@@ -254,29 +194,16 @@ export default function Recordatorios({
                   </div>
                   <div className="turnoMain">
                     <div className="entryName">{a.name}</div>
-                    {a.service && <span className="tag">{a.service}</span>}
+                    <div className="apptTags">
+                      {a.service && <span className="tag">{a.service}</span>}
+                      {a.deposit > 0 && <span className="tag tagMint">Seña {fmtMoney(a.deposit)}</span>}
+                    </div>
                   </div>
                   <div className="turnoActions">
-                    {a.phone ? (
-                      <a
-                        className={a.remindedAt ? "waBtn waDone" : "waBtn"}
-                        href={whatsAppLink(a.phone, turnoMessage(a))}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={() => markReminded(a.id)}
-                      >
-                        {a.remindedAt ? "✓ Avisado" : "Recordar"}
-                      </a>
-                    ) : (
-                      <span className="hint">Sin teléfono</span>
+                    {waButton(a.phone, turnoMessage(a), !!a.remindedAt, () => markReminded(a.id), "Recordar")}
+                    {g.key === "hoy" && (
+                      <button className="primaryBtn smallBtn" onClick={() => onAttend(a)}>Vino</button>
                     )}
-                    <button
-                      className="iconBtn"
-                      onClick={() => removeTurno(a.id)}
-                      aria-label={`Borrar turno de ${a.name}`}
-                    >
-                      ×
-                    </button>
                   </div>
                 </div>
               ))}
@@ -285,43 +212,52 @@ export default function Recordatorios({
         ))
       )}
 
+      <h3 className="groupTitle">Cumpleaños</h3>
+      {birthdays.length === 0 ? (
+        <div className="card emptyState">Ningún cumple en los próximos {BIRTHDAY_WINDOW} días.</div>
+      ) : (
+        <div className="card cardList">
+          {birthdays.map((c) => (
+            <div key={c.id} className="turnoRow">
+              <div className="bdayIcon" aria-hidden="true">🎂</div>
+              <div className="turnoMain">
+                <div className="entryName">{c.name}</div>
+                <div className="entryTime">
+                  {c.inDays === 0 ? "¡Hoy!" : c.inDays === 1 ? "Mañana" : `En ${c.inDays} días`} · {fmtBirthday(c.birthday)}
+                </div>
+              </div>
+              <div className="turnoActions">
+                {c.inDays === 0
+                  ? waButton(c.phone, birthdayMessage(c), bdaySent[c.id] === year, () => markBirthdaySent(c), "Saludar")
+                  : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <h3 className="groupTitle">Les toca service</h3>
-      <p className="sectionSub" style={{ marginTop: -4 }}>
+      <p className="sectionSub" style={{ marginTop: -4, marginBottom: 10 }}>
         Clientas que vinieron hace {reminderCfg.serviceDays} días o más y no tienen turno.
       </p>
       {due.length === 0 ? (
         <div className="card emptyState">Nadie pendiente por ahora ✨</div>
       ) : (
         <div className="card cardList">
-          {due.map((c) => {
-            const done = sent[c.id] === c.lastVisit;
-            return (
-              <div key={c.id} className="turnoRow">
-                <div className="turnoMain">
-                  <div className="entryName">{c.name}</div>
-                  <div className="entryTime">
-                    Última visita {fmtShortDate(c.lastVisit)}
-                    {c.service && <span className="tag">{c.service}</span>}
-                  </div>
-                </div>
-                <div className="turnoActions">
-                  {c.phone ? (
-                    <a
-                      className={done ? "waBtn waDone" : "waBtn"}
-                      href={whatsAppLink(c.phone, serviceMessage(c))}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={() => markServiceSent(c)}
-                    >
-                      {done ? "✓ Avisado" : "Avisar"}
-                    </a>
-                  ) : (
-                    <span className="hint">Sin teléfono</span>
-                  )}
+          {due.map((c) => (
+            <div key={c.id} className="turnoRow">
+              <div className="turnoMain">
+                <div className="entryName">{c.name}</div>
+                <div className="entryTime">
+                  Última visita {fmtShortDate(c.lastVisit)}
+                  {c.service && <span className="tag">{c.service}</span>}
                 </div>
               </div>
-            );
-          })}
+              <div className="turnoActions">
+                {waButton(c.phone, serviceMessage(c), sent[c.id] === c.lastVisit, () => markServiceSent(c), "Avisar")}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -352,6 +288,15 @@ export default function Recordatorios({
               rows={4}
               value={tplDraft.service}
               onChange={(e) => setTplDraft((t) => ({ ...t, service: e.target.value }))}
+            />
+          </label>
+          <label className="field">
+            <span className="fieldLabel">Saludo de cumpleaños</span>
+            <textarea
+              className="input textarea"
+              rows={3}
+              value={tplDraft.cumple}
+              onChange={(e) => setTplDraft((t) => ({ ...t, cumple: e.target.value }))}
             />
           </label>
           <label className="field fieldInline">

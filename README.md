@@ -4,9 +4,13 @@ PWA a medida para el control diario de ingresos de un salon de unas. Registro de
 
 ## Funcionalidades
 
-• Registro diario de ingresos
+• Registro diario de ingresos y gastos, con lista de precios que completa el monto
 • Reparto configurable por profesional (porcentajes)
 • Resumen/estadisticas de lo cobrado
+• Agenda semanal con horarios libres y seña por turno
+• Fichas de clientas: WhatsApp, servicio habitual, notas, cumpleaños, fotos y ranking
+• Avisos por WhatsApp: recordatorio de turno, service vencido y cumpleaños
+• Clave de acceso y backup (CSV para Excel + JSON completo)
 
 ## Stack
 
@@ -32,6 +36,11 @@ Frontend:
 cd frontend
 npm install
 npm run dev
+
+## Deploy del backend
+
+• APP_PASSWORD (opcional): clave inicial. Si no se define, la app pide crear una la primera vez que se abre.
+• DATA_DIR: carpeta donde se guardan la base SQLite y las fotos de clientas (subcarpeta photos/). Tiene que ser un disco persistente.
 
 ## Notas
 

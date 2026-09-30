@@ -33,7 +33,7 @@ router.get("/", (_req, res) => {
 // POST /api/entries/:date  -> agrega una clienta
 router.post("/:date", (req, res) => {
   const { date } = req.params;
-  const { name, amount, time, serviceType, extras } = req.body;
+  const { name, amount, time, serviceType, extras, appointmentId } = req.body;
 
   const parsedAmount = Number(amount);
   if (!parsedAmount || parsedAmount <= 0) {
@@ -49,6 +49,11 @@ router.post("/:date", (req, res) => {
     "INSERT INTO entries (id, date, name, amount, time, service_type, extras) VALUES (?, ?, ?, ?, ?, ?, ?)"
   ).run(id, date, finalName, parsedAmount, time || "", finalServiceType, JSON.stringify(finalExtras));
 
+  // si viene de un turno ("Vino"), lo marca como atendido
+  if (appointmentId) {
+    db.prepare("UPDATE appointments SET entry_id = ? WHERE id = ?").run(id, appointmentId);
+  }
+
   res.status(201).json({
     id,
     name: finalName,
@@ -63,6 +68,8 @@ router.post("/:date", (req, res) => {
 router.delete("/id/:id", (req, res) => {
   const { id } = req.params;
   db.prepare("DELETE FROM entries WHERE id = ?").run(id);
+  // el turno vuelve a quedar pendiente si se borra su cobro
+  db.prepare("UPDATE appointments SET entry_id = NULL WHERE entry_id = ?").run(id);
   res.status(204).end();
 });
 

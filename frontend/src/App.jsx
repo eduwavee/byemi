@@ -1,36 +1,79 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { api } from "./api";
-import { toLocalDateStr } from "./utils";
+import { api, auth } from "./api";
+import { toLocalDateStr, DEFAULT_CATALOG, DEFAULT_AGENDA } from "./utils";
 import { INSPO_PHOTOS, INSTAGRAM_URL, INSTAGRAM_HANDLE } from "./inspo";
 import Caja from "./Caja";
+import Agenda from "./Agenda";
 import Clientas from "./Clientas";
+import Ajustes from "./Ajustes";
+import Login from "./Login";
 import Recordatorios, {
   DEFAULT_REMINDERS,
+  birthdaysToday,
   dueForService,
   pendingTurnos,
+  readBirthdaySent,
   readSent,
 } from "./Recordatorios";
 import "./styles.css";
 
 const TABS = [
   { key: "caja", label: "Caja", icon: WalletIcon },
+  { key: "agenda", label: "Agenda", icon: CalendarIcon },
   { key: "clientas", label: "Clientas", icon: HeartIcon },
-  { key: "recordatorios", label: "Recordatorios", icon: BellIcon },
+  { key: "avisos", label: "Avisos", icon: BellIcon },
+  { key: "ajustes", label: "Ajustes", icon: SlidersIcon },
 ];
 
 export default function App() {
+  const [authState, setAuthState] = useState("checking"); // checking | setup | login | ok
+
+  const checkAuth = useCallback(async () => {
+    try {
+      const status = await api.authStatus();
+      setAuthState(!status.configured ? "setup" : status.valid ? "ok" : "login");
+    } catch {
+      // sin conexion: se muestra la app con el aviso de "sin conexión"
+      setAuthState("ok");
+    }
+  }, []);
+
+  useEffect(() => {
+    auth.onUnauthorized(() => setAuthState("login"));
+    checkAuth();
+  }, [checkAuth]);
+
+  if (authState === "checking") return <div className="page" />;
+  if (authState === "setup" || authState === "login") {
+    return <Login mode={authState} onDone={() => setAuthState("ok")} />;
+  }
+  return (
+    <Main
+      onLogout={async () => {
+        await api.logout().catch(() => {});
+        auth.setToken("");
+        setAuthState("login");
+      }}
+    />
+  );
+}
+
+function Main({ onLogout }) {
   const [today] = useState(() => toLocalDateStr(new Date()));
   const [tab, setTab] = useState("caja");
   const [clients, setClients] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [reminderCfg, setReminderCfg] = useState(DEFAULT_REMINDERS);
+  const [catalog, setCatalog] = useState(DEFAULT_CATALOG);
+  const [agendaCfg, setAgendaCfg] = useState(DEFAULT_AGENDA);
   const [preselectClientId, setPreselectClientId] = useState(null);
+  const [cajaPrefill, setCajaPrefill] = useState(null);
   const [toast, setToast] = useState(null);
   const [offline, setOffline] = useState(false);
 
   const flash = useCallback((msg) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 2200);
+    setTimeout(() => setToast(null), 2400);
   }, []);
 
   const loadClients = useCallback(async () => {
@@ -49,18 +92,26 @@ export default function App() {
     }
   }, [today]);
 
-  useEffect(() => {
+  const reloadAll = useCallback(() => {
     loadClients();
     loadAppointments();
-    api.getReminderConfig().then(setReminderCfg).catch(() => {});
   }, [loadClients, loadAppointments]);
+
+  useEffect(() => {
+    reloadAll();
+    api.getReminderConfig().then(setReminderCfg).catch(() => {});
+    api.getCatalog().then(setCatalog).catch(() => {});
+    api.getAgendaConfig().then(setAgendaCfg).catch(() => {});
+  }, [reloadAll]);
 
   const pendingCount = useMemo(() => {
     const sent = readSent();
+    const bdaySent = readBirthdaySent();
     const dueUnsent = dueForService(clients, today, reminderCfg.serviceDays).filter(
       (c) => sent[c.id] !== c.lastVisit
     );
-    return pendingTurnos(appointments, today).length + dueUnsent.length;
+    const bdays = birthdaysToday(clients, today).filter((c) => bdaySent[c.id] !== today.slice(0, 4));
+    return pendingTurnos(appointments, today).length + dueUnsent.length + bdays.length;
   }, [clients, appointments, today, reminderCfg.serviceDays]);
 
   const goTo = (key) => {
@@ -70,8 +121,22 @@ export default function App() {
 
   const scheduleFor = (clientId) => {
     setPreselectClientId(clientId);
-    goTo("recordatorios");
+    goTo("agenda");
   };
+
+  // "Vino": pasa el turno a la caja para cobrarlo
+  const attend = (appt) => {
+    setCajaPrefill({
+      appointmentId: appt.id,
+      date: appt.date,
+      name: appt.name,
+      service: appt.service,
+      deposit: appt.deposit || 0,
+    });
+    goTo("caja");
+  };
+
+  const clearPreselect = useCallback(() => setPreselectClientId(null), []);
 
   return (
     <div className="page">
@@ -84,7 +149,7 @@ export default function App() {
           </div>
         </header>
 
-        {tab === "caja" && <InspoStrip />}
+        {tab === "caja" && !cajaPrefill && <InspoStrip />}
 
         {offline && (
           <div className="offlineBanner">
@@ -98,8 +163,27 @@ export default function App() {
               today={today}
               flash={flash}
               clients={clients}
+              catalog={catalog}
+              prefill={cajaPrefill}
+              onPrefillUsed={(saved) => {
+                setCajaPrefill(null);
+                if (saved) reloadAll();
+              }}
               onEntriesChanged={loadClients}
               setOffline={setOffline}
+            />
+          )}
+          {tab === "agenda" && (
+            <Agenda
+              today={today}
+              clients={clients}
+              catalog={catalog}
+              agendaCfg={agendaCfg}
+              flash={flash}
+              preselectClientId={preselectClientId}
+              onPreselectUsed={clearPreselect}
+              onChanged={reloadAll}
+              onAttend={attend}
             />
           )}
           {tab === "clientas" && (
@@ -107,11 +191,12 @@ export default function App() {
               today={today}
               clients={clients}
               setClients={setClients}
+              catalog={catalog}
               flash={flash}
               onSchedule={scheduleFor}
             />
           )}
-          {tab === "recordatorios" && (
+          {tab === "avisos" && (
             <Recordatorios
               today={today}
               clients={clients}
@@ -120,8 +205,18 @@ export default function App() {
               reminderCfg={reminderCfg}
               setReminderCfg={setReminderCfg}
               flash={flash}
-              preselectClientId={preselectClientId}
-              onClientsChanged={loadClients}
+              onGoToAgenda={() => goTo("agenda")}
+              onAttend={attend}
+            />
+          )}
+          {tab === "ajustes" && (
+            <Ajustes
+              catalog={catalog}
+              setCatalog={setCatalog}
+              agendaCfg={agendaCfg}
+              setAgendaCfg={setAgendaCfg}
+              flash={flash}
+              onLogout={onLogout}
             />
           )}
         </main>
@@ -137,9 +232,7 @@ export default function App() {
           >
             <span className="tabIcon">
               <Icon />
-              {key === "recordatorios" && pendingCount > 0 && (
-                <span className="tabBadge">{pendingCount}</span>
-              )}
+              {key === "avisos" && pendingCount > 0 && <span className="tabBadge">{pendingCount}</span>}
             </span>
             <span className="tabLabel">{label}</span>
           </button>
@@ -179,18 +272,38 @@ function InspoStrip() {
   );
 }
 
+const iconProps = {
+  viewBox: "0 0 24 24",
+  width: 22,
+  height: 22,
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.8,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+};
+
 function WalletIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <svg {...iconProps}>
       <rect x="3" y="6" width="18" height="13" rx="3" />
       <path d="M3 10h18M16 14.5h2" />
     </svg>
   );
 }
 
+function CalendarIcon() {
+  return (
+    <svg {...iconProps}>
+      <rect x="3.5" y="5" width="17" height="15" rx="3" />
+      <path d="M3.5 10h17M8 3v4M16 3v4" />
+    </svg>
+  );
+}
+
 function HeartIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <svg {...iconProps}>
       <path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" />
     </svg>
   );
@@ -198,9 +311,19 @@ function HeartIcon() {
 
 function BellIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <svg {...iconProps}>
       <path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z" />
       <path d="M10 20.5a2 2 0 0 0 4 0" />
+    </svg>
+  );
+}
+
+function SlidersIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+      <circle cx="16" cy="7" r="2" />
+      <circle cx="10" cy="17" r="2" />
     </svg>
   );
 }

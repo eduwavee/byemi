@@ -1,11 +1,11 @@
 {
-  "name": "Control Uñas - Caja diaria",
-  "short_name": "Control Uñas",
-  "description": "Registro de ganancias diarias y reparto por porcentajes",
+  "name": "by Emi · Nails studio",
+  "short_name": "by Emi",
+  "description": "Caja diaria, clientas y recordatorios de turnos",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#241019",
-  "theme_color": "#241019",
+  "background_color": "#FFF5F7",
+  "theme_color": "#FFF5F7",
   "icons": [
     {
       "src": "/icon-192.png",

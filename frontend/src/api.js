@@ -33,4 +33,20 @@ export const api = {
   getSummary: (range, date) => request(`/api/summary/${range}/${date}`),
   getAllTime: (since) => request(`/api/summary/alltime${since ? `?since=${since}` : ""}`),
   resetGoal: () => request(`/api/config/split/reset-goal`, { method: "POST" }),
+
+  getClients: () => request(`/api/clients`),
+  addClient: (client) => request(`/api/clients`, { method: "POST", body: JSON.stringify(client) }),
+  updateClient: (id, client) =>
+    request(`/api/clients/${id}`, { method: "PUT", body: JSON.stringify(client) }),
+  deleteClient: (id) => request(`/api/clients/${id}`, { method: "DELETE" }),
+
+  getAppointments: (from) => request(`/api/appointments?from=${from}`),
+  addAppointment: (appt) =>
+    request(`/api/appointments`, { method: "POST", body: JSON.stringify(appt) }),
+  markReminded: (id) => request(`/api/appointments/${id}/reminded`, { method: "POST" }),
+  deleteAppointment: (id) => request(`/api/appointments/${id}`, { method: "DELETE" }),
+
+  getReminderConfig: () => request(`/api/config/reminders`),
+  saveReminderConfig: (cfg) =>
+    request(`/api/config/reminders`, { method: "PUT", body: JSON.stringify(cfg) }),
 };

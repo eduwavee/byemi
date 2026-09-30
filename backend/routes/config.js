@@ -45,4 +45,22 @@ router.post("/split/reset-goal", (req, res) => {
   res.json(JSON.parse(value));
 });
 
+// GET /api/config/reminders
+router.get("/reminders", (_req, res) => {
+  const row = db.prepare("SELECT value FROM config WHERE key = ?").get("reminders");
+  res.json(JSON.parse(row.value));
+});
+
+// PUT /api/config/reminders
+router.put("/reminders", (req, res) => {
+  const { turno, service, serviceDays } = req.body;
+  const days = Number(serviceDays);
+  if (!turno || !service || !days || days < 1) {
+    return res.status(400).json({ error: "Completá los dos mensajes y los días" });
+  }
+  const value = JSON.stringify({ turno: String(turno), service: String(service), serviceDays: days });
+  db.prepare("UPDATE config SET value = ? WHERE key = ?").run(value, "reminders");
+  res.json(JSON.parse(value));
+});
+
 module.exports = router;

@@ -27,7 +27,30 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS clients (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    phone TEXT NOT NULL DEFAULT '',
+    service TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS appointments (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    time TEXT NOT NULL DEFAULT '',
+    service TEXT NOT NULL DEFAULT '',
+    reminded_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date);
 `);
+
+db.pragma("foreign_keys = ON");
 
 // migracion: si la base ya existia de una version anterior sin estas columnas, las agrega
 const existingCols = db.prepare("PRAGMA table_info(entries)").all().map((c) => c.name);
@@ -59,6 +82,20 @@ if (!existing) {
     const migrated = { otroGoal: 0, otroGoalSince: null, ...parsed };
     db.prepare("UPDATE config SET value = ? WHERE key = ?").run(JSON.stringify(migrated), "split");
   }
+}
+
+// textos por defecto de los recordatorios de WhatsApp
+if (!db.prepare("SELECT value FROM config WHERE key = ?").get("reminders")) {
+  db.prepare("INSERT INTO config (key, value) VALUES (?, ?)").run(
+    "reminders",
+    JSON.stringify({
+      turno:
+        "¡Hola {nombre}! 💅 Te recuerdo tu turno de {servicio} el {dia} a las {hora}. ¡Te espero! Si no podés venir avisame así libero el horario 🌸",
+      service:
+        "¡Hola {nombre}! 💖 Ya pasaron {semanas} semanas desde tu último service. ¿Querés que te reserve un turno para esta semana?",
+      serviceDays: 21,
+    })
+  );
 }
 
 module.exports = db;

@@ -6,6 +6,21 @@ Se instala en el celular como una app ("Agregar a pantalla de inicio"), sin pasa
 
 En producción: **[byemi.vercel.app](https://byemi.vercel.app)**
 
+<p align="center">
+  <img src="docs/celular-caja.jpg" width="200" alt="Caja: total del día, formulario para cargar un cobro con tipo de servicio y extras">
+  <img src="docs/celular-agenda.jpg" width="200" alt="Agenda de la semana: turnos con seña, turnos atendidos y horarios libres">
+  <img src="docs/celular-clientas.jpg" width="200" alt="Fichas de clientas: servicio habitual, visitas, cumpleaños, notas, fotos, próximo turno y WhatsApp">
+  <img src="docs/celular-avisos.jpg" width="200" alt="Avisos: turnos de hoy, mañana y más adelante con botón Recordar por WhatsApp">
+</p>
+
+<p align="center">
+  <img src="docs/celular-cobro-turno.jpg" width="200" alt="Cobro desde un turno: la Caja muestra la seña que dejó la clienta y cuánto falta cobrar">
+  <img src="docs/celular-reparto.jpg" width="200" alt="Reparto del día en insumos, ganancia y meta, con gráfico de anillo y barra de progreso de la meta">
+  <img src="docs/celular-resumen.jpg" width="200" alt="Resumen mensual: total, comparación con el mes anterior, gastos y desglose por servicio">
+  <img src="docs/celular-ranking.jpg" width="200" alt="Ranking de clientas: las que más vienen y las que más invierten"><br>
+  <sub>Cobro desde un turno, reparto con meta de ahorro, resumen mensual y ranking de clientas (datos de ejemplo).</sub>
+</p>
+
 ---
 
 ## Qué hace
@@ -110,6 +125,8 @@ frontend/                     PWA (React + Vite)
     utils.js                  fechas, plata, WhatsApp y compresión de fotos
     inspo.js                  lista de fotos e Instagram del salón
     styles.css                ⭐ sistema visual pastel
+
+docs/                         capturas para este README
 ```
 
 Hecho con **React 18** y **Vite 5** en el frontend, y **Node.js**, **Express** y **SQLite** ([better-sqlite3](https://github.com/WiseLibs/better-sqlite3)) en el backend. Sin frameworks de UI ni librerías de gráficos: el anillo del reparto es un `conic-gradient` de CSS y los íconos son SVG propios.

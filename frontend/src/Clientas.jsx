@@ -79,7 +79,7 @@ export default function Clientas({ today, clients, setClients, catalog, flash, o
       }
       cancel();
     } catch {
-      flash("No se pudo guardar. Revisá tu conexión.");
+      flash("No se pudo guardar.");
     } finally {
       setSaving(false);
     }

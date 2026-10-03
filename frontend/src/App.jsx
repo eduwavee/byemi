@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { api, auth } from "./api";
+import { api } from "./api";
+import { askPersistentStorage } from "./db";
 import { toLocalDateStr, DEFAULT_CATALOG, DEFAULT_AGENDA } from "./utils";
 import { INSPO_PHOTOS, INSTAGRAM_URL, INSTAGRAM_HANDLE } from "./inspo";
 import Caja from "./Caja";
@@ -17,6 +18,8 @@ import Recordatorios, {
 } from "./Recordatorios";
 import "./styles.css";
 
+const BACKUP_EVERY_MS = 7 * 24 * 60 * 60 * 1000;
+
 const TABS = [
   { key: "caja", label: "Caja", icon: WalletIcon },
   { key: "agenda", label: "Agenda", icon: CalendarIcon },
@@ -33,13 +36,13 @@ export default function App() {
       const status = await api.authStatus();
       setAuthState(!status.configured ? "setup" : status.valid ? "ok" : "login");
     } catch {
-      // sin conexion: se muestra la app con el aviso de "sin conexión"
+      // no se pudo leer la base del celular: se muestra la app con el aviso
       setAuthState("ok");
     }
   }, []);
 
   useEffect(() => {
-    auth.onUnauthorized(() => setAuthState("login"));
+    askPersistentStorage();
     checkAuth();
   }, [checkAuth]);
 
@@ -50,8 +53,7 @@ export default function App() {
   return (
     <Main
       onLogout={async () => {
-        await api.logout().catch(() => {});
-        auth.setToken("");
+        await api.logout();
         setAuthState("login");
       }}
     />
@@ -70,6 +72,7 @@ function Main({ onLogout }) {
   const [cajaPrefill, setCajaPrefill] = useState(null);
   const [toast, setToast] = useState(null);
   const [offline, setOffline] = useState(false);
+  const [backupDue, setBackupDue] = useState(false);
 
   const flash = useCallback((msg) => {
     setToast(msg);
@@ -80,7 +83,7 @@ function Main({ onLogout }) {
     try {
       setClients(await api.getClients());
     } catch {
-      // la caja avisa si no hay conexion
+      // la caja avisa si no se pudieron leer los datos
     }
   }, []);
 
@@ -103,6 +106,17 @@ function Main({ onLogout }) {
     api.getCatalog().then(setCatalog).catch(() => {});
     api.getAgendaConfig().then(setAgendaCfg).catch(() => {});
   }, [reloadAll]);
+
+  // los datos viven solo en este celular: si hace mas de una semana que no hay backup, se avisa
+  const checkBackup = useCallback(() => {
+    api
+      .getBackupInfo()
+      .then(({ lastBackup, hasData }) =>
+        setBackupDue(hasData && (!lastBackup || Date.now() - new Date(lastBackup) > BACKUP_EVERY_MS))
+      )
+      .catch(() => {});
+  }, []);
+  useEffect(checkBackup, [checkBackup, tab]);
 
   const pendingCount = useMemo(() => {
     const sent = readSent();
@@ -151,9 +165,16 @@ function Main({ onLogout }) {
 
         {tab === "caja" && !cajaPrefill && <InspoStrip />}
 
+        {tab === "caja" && backupDue && !cajaPrefill && (
+          <div className="backupBanner">
+            <span>Tus datos están solo en este celular. Hacé un backup para no perderlos.</span>
+            <button className="linkBtn" onClick={() => goTo("ajustes")}>Hacer backup</button>
+          </div>
+        )}
+
         {offline && (
           <div className="offlineBanner">
-            No hay conexión con el servidor. Revisá que el backend esté corriendo.
+            No se pudieron leer los datos guardados en este celular. Cerrá la app y volvé a abrirla.
           </div>
         )}
 

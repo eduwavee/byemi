@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { api, auth } from "./api";
+import React, { useState, useEffect, useRef } from "react";
+import { api } from "./api";
 
 const WEEKDAYS = [
   { n: 1, label: "Lun" },
@@ -23,11 +23,11 @@ export default function Ajustes({ catalog, setCatalog, agendaCfg, setAgendaCfg, 
     <>
       <div className="sectionIntro">
         <h2 className="sectionTitle">Ajustes</h2>
-        <p className="sectionSub">Precios, horario, clave y copias de seguridad.</p>
+        <p className="sectionSub">Copias de seguridad, precios, horario y clave.</p>
       </div>
+      <Backup flash={flash} />
       <PriceList catalog={catalog} setCatalog={setCatalog} flash={flash} />
       <WorkHours agendaCfg={agendaCfg} setAgendaCfg={setAgendaCfg} flash={flash} />
-      <Backup flash={flash} />
       <Password flash={flash} onLogout={onLogout} />
     </>
   );
@@ -179,11 +179,45 @@ function WorkHours({ agendaCfg, setAgendaCfg, flash }) {
 }
 
 function Backup({ flash }) {
-  const download = async (path, filename) => {
+  const [lastBackup, setLastBackup] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const fileInput = useRef(null);
+
+  useEffect(() => {
+    api.getBackupInfo().then((info) => setLastBackup(info.lastBackup)).catch(() => {});
+  }, []);
+
+  const run = async (fn, okMsg) => {
+    setBusy(true);
     try {
-      await api.download(path, filename);
-    } catch {
-      flash("No se pudo descargar.");
+      if (await fn()) flash(okMsg);
+    } catch (err) {
+      flash(err.message || "No se pudo hacer.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const backup = () =>
+    run(async () => {
+      const saved = await api.exportBackup();
+      if (saved) setLastBackup(new Date().toISOString());
+      return saved;
+    }, "Backup listo. Guardalo en Drive, en tu mail o mandátelo por WhatsApp.");
+
+  const restore = async (file) => {
+    if (!file) return;
+    if (!confirm("Esto reemplaza TODOS los datos de este celular por los del archivo. ¿Seguimos?")) return;
+    setBusy(true);
+    try {
+      const res = await api.importBackup(file);
+      const note = res.skippedPhotos ? ` (${res.skippedPhotos} fotos no venían en el archivo)` : "";
+      alert(`Listo: se cargaron ${res.clients} clientas y ${res.entries} cobros${note}.`);
+      window.location.reload();
+    } catch (err) {
+      flash(err.message || "No se pudo restaurar el backup.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -193,20 +227,42 @@ function Backup({ flash }) {
         <h2 className="h2">Backup</h2>
       </div>
       <p className="hint" style={{ marginTop: -6 }}>
-        Descargá tus datos en planillas que abren con Excel o Google Sheets. Conviene hacerlo una vez por semana.
+        Tus datos se guardan solo en este celular. Si se pierde, se rompe o borrás la app, se pierden con él.
+        Hacé un backup completo una vez por semana y guardalo fuera del celu (Drive, mail o WhatsApp).
       </p>
-      <div className="chipRow" style={{ marginTop: 12 }}>
+      <p className="hint" style={{ marginTop: 8 }}>
+        {lastBackup ? `Último backup: ${new Date(lastBackup).toLocaleDateString("es-AR")}.` : "Todavía no hiciste ningún backup."}
+      </p>
+      <div className="formActions" style={{ marginTop: 14 }}>
+        <button className="primaryBtn" disabled={busy} onClick={backup}>
+          Backup completo
+        </button>
+      </div>
+
+      <div className="fieldLabel" style={{ marginTop: 18 }}>Planillas para Excel</div>
+      <div className="chipRow">
         {EXPORTS.map((x) => (
-          <button key={x.key} className="secondaryBtn" onClick={() => download(`/api/export/${x.key}.csv`, `byemi-${x.key}.csv`)}>
+          <button key={x.key} className="secondaryBtn" disabled={busy} onClick={() => run(() => api.exportCsv(x.key), "Planilla lista.")}>
             {x.label}
           </button>
         ))}
       </div>
-      <div className="formActions" style={{ marginTop: 14 }}>
-        <button className="primaryBtn" onClick={() => download(`/api/export/backup.json`, `byemi-backup-${new Date().toISOString().slice(0, 10)}.json`)}>
-          Backup completo
-        </button>
-      </div>
+
+      <div className="fieldLabel" style={{ marginTop: 18 }}>Celular nuevo</div>
+      <p className="hint">Para pasar tus datos a otro celular, abrí la app ahí y cargá el último backup.</p>
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        onChange={(e) => {
+          restore(e.target.files[0]);
+          e.target.value = "";
+        }}
+      />
+      <button className="linkBtn" disabled={busy} onClick={() => fileInput.current.click()}>
+        Cargar un backup
+      </button>
     </div>
   );
 }
@@ -220,13 +276,11 @@ function Password({ flash, onLogout }) {
     e.preventDefault();
     if (next !== repeat) return flash("Las claves nuevas no coinciden.");
     try {
-      const { token } = await api.changePassword(current, next);
-      // la sesion vieja queda cerrada; seguimos con la nueva
-      auth.setToken(token);
+      await api.changePassword(current, next);
       setCurrent("");
       setNext("");
       setRepeat("");
-      flash("Clave cambiada. Se cerró la sesión en los otros dispositivos.");
+      flash("Clave cambiada.");
     } catch (err) {
       flash(err.message || "No se pudo cambiar la clave.");
     }

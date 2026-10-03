@@ -60,7 +60,7 @@ export default function Caja({
       setOffline(false);
     } catch (err) {
       setOffline(true);
-      flash("No se pudo conectar con el servidor.");
+      flash("No se pudieron leer los datos.");
     } finally {
       setLoading(false);
     }
@@ -174,7 +174,7 @@ export default function Caja({
       loadGoalProgress(split.otroGoalSince);
       onEntriesChanged();
     } catch {
-      flash("No se pudo guardar. Revisá tu conexión.");
+      flash("No se pudo guardar.");
     }
   };
 

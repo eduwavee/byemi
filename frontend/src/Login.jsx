@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { api, auth } from "./api";
+import { api } from "./api";
 
 // mode: "login" (ya hay clave) | "setup" (primera vez: crear la clave)
 export default function Login({ mode, onDone }) {
@@ -18,8 +18,8 @@ export default function Login({ mode, onDone }) {
     }
     setBusy(true);
     try {
-      const { token } = isSetup ? await api.setupPassword(password) : await api.login(password);
-      auth.setToken(token);
+      if (isSetup) await api.setupPassword(password);
+      else await api.login(password);
       onDone();
     } catch (err) {
       setError(err.message || "No se pudo entrar.");

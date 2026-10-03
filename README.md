@@ -2,7 +2,7 @@
 
 PWA hecha a medida para un salón de uñas real. Reemplaza el cuaderno y las notas del celular: cada cobro se anota en segundos, el total del día se reparte solo entre insumos, ganancia y una meta de ahorro, la agenda muestra los huecos libres de la semana y los recordatorios de turno, de service y de cumpleaños salen por WhatsApp con un toque.
 
-Se instala en el celular como una app ("Agregar a pantalla de inicio"), sin pasar por ninguna tienda, y todo queda detrás de una clave de acceso. El diseño es pastel y pensado para usarse con una mano entre clienta y clienta: barra de pestañas abajo, botones grandes y montos en pesos argentinos.
+Se instala en el celular como una app ("Agregar a pantalla de inicio"), sin pasar por ninguna tienda, y todo queda detrás de una clave de acceso. **No necesita servidor**: los datos se guardan en el propio celular, la app abre aunque no haya internet y no hay que pagar ningún hosting (solo la página, gratis en Vercel). El diseño es pastel y pensado para usarse con una mano entre clienta y clienta: barra de pestañas abajo, botones grandes y montos en pesos argentinos.
 
 En producción: **[byemi.vercel.app](https://byemi.vercel.app)**
 
@@ -73,16 +73,17 @@ La app tiene cinco pestañas: **Caja**, **Agenda**, **Clientas**, **Avisos** y *
 |---|---|
 | **Lista de precios** | Servicios (precio y duración) y extras (precio). En 0, el monto no se autocompleta. |
 | **Horario de trabajo** | Hora de entrada y salida, y días que se trabaja. Lo usa la Agenda para calcular los huecos. |
-| **Clave de acceso** | Se crea la primera vez que se abre la app. Cambiarla cierra la sesión en los demás dispositivos. |
-| **Backup** | Planillas CSV (ingresos, gastos, clientas, turnos) que abren bien en Excel en español (separador `;` y acentos), y un backup completo en JSON. |
+| **Clave de acceso** | Se crea la primera vez que se abre la app y protege los datos si alguien agarra el celular. |
+| **Backup** | Backup completo en JSON (con fotos) que se comparte a Drive, mail o WhatsApp, y planillas CSV (ingresos, gastos, clientas, turnos) que abren bien en Excel en español (separador `;` y acentos). Un aviso en la Caja recuerda hacerlo si pasó más de una semana. |
+| **Celular nuevo** | "Cargar un backup" restaura todo en otro celular. También acepta el backup de la versión vieja con servidor. |
 
-**Seguridad y privacidad**
+**Dónde quedan los datos**
 
-- Toda la API pide sesión; la única ruta abierta es la de ingreso.
-- La clave se guarda con `scrypt` y sal aleatoria; las sesiones, como hash SHA-256 del token (nunca el token en sí).
-- Límite de 10 intentos fallidos de clave cada 15 minutos por IP.
-- Las fotos se sirven solo con sesión válida y con nombres de archivo validados.
-- El backup JSON no incluye la clave.
+- Todo se guarda en el celular, en la base local del navegador (IndexedDB): cobros, gastos, clientas, turnos, fotos y ajustes. Nada sale del teléfono salvo cuando se hace un backup.
+- La app le pide al navegador almacenamiento persistente para que no borre los datos si falta espacio.
+- Un service worker guarda la app misma, así que abre sin señal.
+- La clave se guarda con PBKDF2 (150.000 iteraciones) y sal aleatoria. El backup no la incluye.
+- Si el celular se pierde o se borra la app, los datos se van con él: por eso el backup semanal.
 
 ## Cómo funcionan los recordatorios por WhatsApp
 
@@ -93,35 +94,22 @@ Los números se normalizan para Argentina: si se cargan como `11 2345 6789` o `0
 ## Estructura
 
 ```
-backend/                      API REST (Express + SQLite)
-  server.js                   arranque, CORS y rutas
-  auth.js                     clave, sesiones y límite de intentos
-  db.js                       ⭐ esquema SQLite, migraciones automáticas y config por defecto
-  routes/
-    entries.js                cobros de la Caja (y marcar el turno como atendido)
-    expenses.js               gastos
-    summary.js                resumen semanal, mensual e histórico
-    clients.js                fichas (con visitas y total gastado calculados)
-    appointments.js           turnos
-    photos.js                 fotos de clientas en disco
-    config.js                 reparto, precios, horario y mensajes
-    export.js                 CSV para Excel y backup JSON
-  Dockerfile                  imagen para publicar el backend
-
-frontend/                     PWA (React + Vite)
+frontend/                     PWA (React + Vite), sin backend
   index.html                  metadatos de PWA (iOS y Android)
   public/
     manifest.webmanifest      nombre, colores e íconos de la app instalada
+    sw.js                     service worker: la app abre sin internet
     inspo/                    fotos de trabajos para la tira del inicio
   src/
-    App.jsx                   clave, pestañas y estado compartido
+    App.jsx                   clave, pestañas, estado compartido y aviso de backup
     Caja.jsx                  cobros, gastos, reparto, meta y resumen
     Agenda.jsx                semana, horarios libres y turnos
     Clientas.jsx              fichas, fotos y ranking
     Recordatorios.jsx         avisos de turno, service y cumpleaños
-    Ajustes.jsx               precios, horario, clave y backup
+    Ajustes.jsx               backup y restauración, precios, horario y clave
     Login.jsx                 crear clave / ingresar
-    api.js                    cliente de la API (token en localStorage)
+    db.js                     ⭐ base local (IndexedDB)
+    api.js                    ⭐ toda la lógica de datos: cobros, resúmenes, clientas, turnos, export e import
     utils.js                  fechas, plata, WhatsApp y compresión de fotos
     inspo.js                  lista de fotos e Instagram del salón
     styles.css                ⭐ sistema visual pastel
@@ -129,57 +117,34 @@ frontend/                     PWA (React + Vite)
 docs/                         capturas para este README
 ```
 
-Hecho con **React 18** y **Vite 5** en el frontend, y **Node.js**, **Express** y **SQLite** ([better-sqlite3](https://github.com/WiseLibs/better-sqlite3)) en el backend. Sin frameworks de UI ni librerías de gráficos: el anillo del reparto es un `conic-gradient` de CSS y los íconos son SVG propios.
+Hecho con **React 18** y **Vite 5**, sin dependencias más allá de React. Sin frameworks de UI ni librerías de gráficos: el anillo del reparto es un `conic-gradient` de CSS y los íconos son SVG propios.
+
+> Hasta octubre de 2026 la app tenía un backend (Node.js, Express y SQLite) que había que alojar en Render o Railway. Se reemplazó por la base local para no depender de un servidor pago; el código viejo quedó en el historial de git.
 
 ### Datos
 
-| Tabla | Qué guarda |
+| Almacén (IndexedDB) | Qué guarda |
 |---|---|
 | `entries` | Cobros: fecha, hora, clienta, servicio, extras y monto |
 | `expenses` | Gastos: fecha, detalle y monto |
 | `clients` | Fichas de clientas |
 | `appointments` | Turnos, con seña y el cobro que los cerró |
-| `client_photos` | Fotos de cada clienta (el archivo vive en `DATA_DIR/photos/`) |
-| `config` | Reparto, precios, horario, mensajes y la clave (hasheada) |
-| `sessions` | Sesiones abiertas (hash del token) |
-
-Las tablas se crean solas al arrancar, y las columnas nuevas se agregan a bases de versiones anteriores sin perder datos.
+| `photos` | Fotos de cada clienta (como imagen, dentro de la base) |
+| `config` | Reparto, precios, horario, mensajes, fecha del último backup y la clave (hasheada) |
 
 ## Verlo en tu compu
 
-Necesitás **Node.js 20 o superior**. Son dos procesos: el backend en el puerto 3001 y el frontend en el 5173.
+Necesitás **Node.js 20 o superior**.
 
 ```bash
-# terminal 1
-cd backend
-npm install
-npm run dev
-
-# terminal 2
 cd frontend
 npm install
 npm run dev
 ```
 
-Después abrí <http://localhost:5173>. La primera vez la app pide crear una clave.
+Después abrí <http://localhost:5173>. La primera vez la app pide crear una clave. Los datos de prueba quedan en ese navegador; para empezar de cero, borrá los datos del sitio desde las herramientas del navegador.
 
-Como Vite escucha en toda la red (`host: true`), también se puede abrir desde el celular en la misma wifi con la IP de la compu, por ejemplo `http://192.168.0.10:5173`. En ese caso el frontend tiene que apuntar al backend por esa IP (ver `VITE_API_URL`).
-
-### Variables de entorno
-
-**Backend**
-
-| Variable | Para qué |
-|---|---|
-| `PORT` | Puerto de la API (por defecto `3001`). |
-| `DATA_DIR` | Carpeta de la base SQLite (`control-unas.db`) y de las fotos (`photos/`). Por defecto `backend/data/`. En producción tiene que ser un **disco persistente**. |
-| `APP_PASSWORD` | Opcional. Clave inicial. Si no se define, la app pide crearla la primera vez que se abre. Solo se usa si todavía no hay clave. |
-
-**Frontend** (se leen al hacer el build)
-
-| Variable | Para qué |
-|---|---|
-| `VITE_API_URL` | URL del backend sin barra final, por ejemplo `https://byemi-api.tudominio.com`. Por defecto `http://localhost:3001`. |
+Como Vite escucha en toda la red (`host: true`), también se puede abrir desde el celular en la misma wifi con la IP de la compu, por ejemplo `http://192.168.0.10:5173`. Ojo: los datos que cargues así quedan en ese navegador, separados de la app publicada.
 
 ## Personalizar
 
@@ -188,54 +153,40 @@ Como Vite escucha en toda la red (`host: true`), también se puede abrir desde e
 - **Íconos de la app:** agregá `icon-192.png` e `icon-512.png` en `frontend/public/` (los pide el `manifest.webmanifest`).
 - **Servicios, precios, horario y mensajes:** se cambian desde la pestaña **Ajustes** y **Avisos**, sin tocar código.
 
-## Publicar
+## Publicar (gratis)
 
-### Backend (Docker con disco persistente)
+1. Importá el repo en Vercel con **Root Directory** `frontend` (Vite se detecta solo). No hace falta ninguna variable de entorno.
+2. Push a `main`: Vercel publica solo.
 
-SQLite y las fotos viven en archivos, así que el backend necesita un servidor con disco que no se borre: Railway, Render, Fly.io o un VPS. No sirve en plataformas serverless.
+Vercel (o Netlify, o GitHub Pages) sirve la página gratis; no hay servidor ni base de datos que pagar.
 
-1. Publicá la carpeta `backend/` con el `Dockerfile` incluido.
-2. Montá un volumen persistente y apuntá `DATA_DIR` a él (por ejemplo `/data`).
-3. Opcional: definí `APP_PASSWORD`.
-4. Revisá que responda `GET /api/health` → `{ "ok": true }`.
+### Instalarla en el celular de la dueña
 
-El backend confía en el primer proxy (`trust proxy`) para que el límite de intentos vea la IP real.
+1. Abrir la URL en **Safari** (iPhone) o **Chrome** (Android).
+2. **Compartir → Agregar a pantalla de inicio** (iPhone) o **Menú ⋮ → Instalar app** (Android).
+3. Usarla siempre desde el ícono. En iPhone, la app instalada guarda sus datos aparte de Safari: lo que se cargue en una pestaña de Safari no aparece en la app, y viceversa.
 
-### Frontend (Vercel)
+### Pasar los datos de la versión con servidor
 
-1. Importá el repo en Vercel con **Root Directory** `frontend` (Vite se detecta solo).
-2. En **Settings → Environment Variables** cargá `VITE_API_URL` con la URL del backend.
-3. Push a `main`: Vercel publica solo.
+Si ya había datos en el backend viejo: antes de publicar esta versión, entrar a la app vieja y bajar **Ajustes → Backup completo**. Después, en la app nueva instalada en el celular, **Ajustes → Cargar un backup** y elegir ese archivo. Se pasan cobros, gastos, clientas, turnos y ajustes; las fotos no, porque el backup viejo no las incluía.
 
-Para instalarla en el celular: abrir la URL en Safari o Chrome → **Compartir / Menú → Agregar a pantalla de inicio**.
+### Guía rápida para la dueña
+
+1. Abrí el link de la app en **Safari** (iPhone) o **Chrome** (Android).
+2. Instalala: **Compartir → Agregar a pantalla de inicio** (iPhone) o **⋮ → Instalar app** (Android).
+3. Abrila **siempre desde el ícono**, nunca desde el navegador.
+4. La primera vez creá tu clave. Si tenías datos anteriores: **Ajustes → Cargar un backup** y elegí el archivo que te pasaron.
+5. **Todos los domingos:** **Ajustes → Backup completo** y mandátelo por WhatsApp o guardalo en Drive. Si cambiás o perdés el celular, con ese archivo recuperás todo.
+6. No borres la app ni los datos de Safari/Chrome sin tener un backup reciente.
 
 ### Backups ✅
 
-- Desde **Ajustes → Backup**, descargar una vez por semana el backup completo (y las planillas si se quieren mirar en Excel).
-- En el servidor, respaldar periódicamente `DATA_DIR` entero: la base y la carpeta `photos/` (las fotos no van en el JSON).
-
-## API
-
-Todas las rutas, salvo `/api/health` y `/api/auth/*`, piden `Authorization: Bearer <token>`.
-
-| Método | Ruta | Qué hace |
-|---|---|---|
-| `GET` | `/api/auth/status` | Si hay clave creada y si la sesión es válida |
-| `POST` | `/api/auth/setup` · `/login` · `/logout` · `/change` | Crear clave, entrar, salir, cambiar clave |
-| `GET` `POST` | `/api/entries/:date` | Cobros de un día / agregar uno |
-| `DELETE` | `/api/entries/id/:id` | Borrar un cobro (el turno vuelve a pendiente) |
-| `GET` `POST` | `/api/expenses/:date` | Gastos de un día / agregar uno |
-| `GET` | `/api/summary/week/:date` · `/month/:date` · `/alltime` | Resúmenes |
-| `GET` `POST` `PUT` `DELETE` | `/api/clients` | Fichas de clientas |
-| `POST` `DELETE` | `/api/photos` | Subir (base64) o borrar fotos |
-| `GET` `POST` `PUT` `DELETE` | `/api/appointments` | Turnos; `POST /:id/reminded` marca el aviso |
-| `GET` `PUT` | `/api/config/split` · `/catalog` · `/agenda` · `/reminders` | Reparto, precios, horario, mensajes |
-| `GET` | `/api/export/:tabla.csv` · `/backup.json` | Exportar |
+- Una vez por semana, **Ajustes → Backup completo** y guardar el archivo fuera del celular (Drive, mail, WhatsApp a sí misma). Incluye las fotos.
+- Si pasó más de una semana, la Caja muestra un aviso.
 
 ## Próxima etapa
 
-- Funcionar sin conexión (service worker) y sincronizar al volver la señal.
-- Restaurar un backup JSON desde Ajustes.
+- Sincronizar entre dos celulares (hoy cada celular tiene sus propios datos).
 - Varias profesionales en el mismo salón, cada una con su caja y su reparto.
 - Vincular los cobros a la ficha por id, no por nombre.
 - Envío automático de recordatorios (API de WhatsApp Business).
